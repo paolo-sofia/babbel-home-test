@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import pathlib
 from typing import TypeAlias
@@ -61,13 +62,13 @@ def cache_events_uuid(events: list[str]) -> None:
     """Cache event UUIDs in Redis to mark them as processed.
 
     Args:
-    events: A list of event UUIDs to cache.
+        events: A list of event UUIDs to cache.
 
     Returns:
-    None.
+        None.
 
     Raises:
-    None.
+        None.
     """
     for event_uuid in events:
         # Store event_uuid in Redis to mark as processed and set expiration time to 7 days
@@ -75,18 +76,18 @@ def cache_events_uuid(events: list[str]) -> None:
         redis_client.expire(event_uuid, time=60 * 60 * 24 * 7)
 
 
-def lambda_function(event: JSONType, context) -> None:
+def lambda_function(event: JSONType, context) -> JSONType:
     """Main lambda function. It executes the sql query and save the results to s3 bucket.
 
     Args:
-    event: The event data to preprocess and store.
-    context: The context object.
+        event: The event data to preprocess and store.
+        context: The context object.
 
     Returns:
-    None.
+        A json response containing the status code and the exposed metrics.
 
     Raises:
-    None.
+        None.
     """
     global duckdb_conn
 
@@ -107,5 +108,9 @@ def lambda_function(event: JSONType, context) -> None:
     num_duplicate_events: int = event_data.query("event_uuid in (@redis_keys)").shape[0]
     current_timestamp: float = datetime.datetime.now(tz=pytz.timezone("Europe/Berlin")).timestamp()
 
+    return {
+        "statusCode": 200,
+        "body": json.dumps({"num_duplicate_events": num_duplicate_events, "timestamp": current_timestamp})
+    }
 
 
