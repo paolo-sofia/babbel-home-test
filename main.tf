@@ -59,6 +59,42 @@ data "aws_iam_policy_document" "s3_role" {
   }
 }
 
+data "aws_iam_policy_document" "logging_role" {
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents"
+    ]
+
+    resources = [
+      "arn:aws:logs:*:*:*",
+    ]
+  }
+}
+
+data "aws_iam_policy_document" "kinesis_role" {
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "kinesis:DescribeStream",
+      "kinesis:DescribeStreamSummary",
+      "kinesis:GetRecords",
+      "kinesis:GetShardIterator",
+      "kinesis:ListShards",
+      "kinesis:ListStreams",
+      "kinesis:SubscribeToShard",
+    ]
+
+    resources = [
+      "arn:aws:s3:::${s3_bucket_name}/*",
+      "arn:aws:s3:::${s3_bucket_name}",
+    ]
+  }
+}
 
 resource "aws_iam_policy" "s3_policy" {
   name        = "default_policy_name"
@@ -66,11 +102,24 @@ resource "aws_iam_policy" "s3_policy" {
   policy      = data.aws_iam_policy_document.s3_role.json
 }
 
+resource "aws_iam_policy" "logging_policy" {
+  name        = "default_policy_name"
+  description = "Logging Access"
+  policy      = data.aws_iam_policy_document.logging_role.json
+}
+
+resource "aws_iam_policy" "kinesis_policy" {
+  name        = "default_policy_name"
+  description = "Kinesis Access"
+  policy      = data.aws_iam_policy_document.kinesis_role.json
+}
+
 resource "aws_iam_role" "iam_for_lambda" {
   name               = "iam_for_lambda"
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
   managed_policy_arns = [aws_iam_policy.s3_policy.arn]
 }
+
 
 data "archive_file" "lambda" {
   type        = "zip"
@@ -108,6 +157,23 @@ resource "aws_lambda_function" "lambda_function" {
   }
 }
 
+resource "aws_lambda_function_event_invoke_config" "lambda_invoke" {
+  function_name                = aws_lambda_function.lambda_function.function_name
+  maximum_event_age_in_seconds = 3600
+  maximum_retry_attempts       = 2
+}
+
+resource "aws_lambda_event_source_mapping" "example" {
+  event_source_arn                   = aws_kinesis_stream.kinesis_stream.arn
+  function_name                      = aws_lambda_function.lambda_function.arn
+  starting_position                  = "LATEST"
+  batch_size                         = 1000000
+  maximum_batching_window_in_seconds = 300
+
+  depends_on = [
+    aws_iam_policy.kinesis_policy
+  ]
+}
 
 resource "aws_elasticache_cluster" "redis" {
   cluster_id              = "redis-cluster"
@@ -118,3 +184,4 @@ resource "aws_elasticache_cluster" "redis" {
   engine_version          = "7.2"
   port                    = local.redis_port
 }
+
