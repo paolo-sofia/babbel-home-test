@@ -12,14 +12,27 @@ import redis
 JSONType: TypeAlias = dict[str, "JSON"]
 
 # Connect to Redis, S3 and duckdb
-redis_client = redis.StrictRedis(host=os.getenv("REDIS_HOST"), port=os.getenv("REDIS_PORT"), db=os.getenv("REDIS_DB"))
+redis_client = redis.StrictRedis(
+    host=os.getenv("REDIS_HOST"), port=os.getenv("REDIS_PORT"), db=os.getenv("REDIS_DB")
+)
 s3_client = boto3.client("s3")
 # database="" means to use memory instead of persisting to file
 duckdb_conn: duckdb.DuckDBPyConnection = duckdb.connect(database="")
 
+# initialize duckdb s3 config
+duckdb_conn.execute(f"""
+CREATE SECRET secret1 (
+    TYPE S3,
+    KEY_ID '{os.getenv("S3_KEY")}',
+    SECRET '{os.getenv("S3_SECRET")}',
+    REGION 'eu-central-1'
+);
+""")
+
 
 def get_sql_query() -> str:
-    return """COPY
+    return """
+COPY
 (SELECT
     event_uuid,
     event_name,
@@ -104,19 +117,30 @@ def lambda_handler(event: JSONType, context) -> JSONType:
     sql_query = get_sql_query()
 
     # executes the sql query and save the results to s3
-    duckdb_conn.execute(sql_query.format(cached_uuid_keys=redis_keys_sql, bucket_name=os.getenv("S3_BUCKET")))
+    duckdb_conn.execute(
+        sql_query.format(
+            cached_uuid_keys=redis_keys_sql, bucket_name=os.getenv("S3_BUCKET")
+        )
+    )
 
     # put the event_uuid in cache
     cache_events_uuid(event["event_uuid"])
 
     # compute metrics to be exposed.
     num_duplicate_events: int = event_data.query("event_uuid in (@redis_keys)").shape[0]
-    current_timestamp: float = datetime.datetime.now(tz=pytz.timezone("Europe/Berlin")).timestamp()
+    num_events_processed: int = event_data.shape[0]
+    current_timestamp: float = datetime.datetime.now(
+        tz=pytz.timezone("Europe/Berlin")
+    ).timestamp()
 
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps({"num_duplicate_events": num_duplicate_events, "timestamp": current_timestamp})
+        "body": json.dumps(
+            {
+                "num_events_processed": num_events_processed,
+                "num_duplicate_events": num_duplicate_events,
+                "timestamp": current_timestamp,
+            }
+        ),
     }
-
-

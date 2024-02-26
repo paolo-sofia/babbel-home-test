@@ -7,6 +7,16 @@ terraform {
   }
 }
 
+variable "s3_key" {
+  default = ""
+  type = string
+}
+
+variable "s3_secret" {
+  default = ""
+  type = string
+}
+
 locals {
   region                      = "eu-central-1"
   redis_host                  = "redis-host"
@@ -17,7 +27,6 @@ locals {
   function_runtime            = "python3.11"
   function_timeout_in_seconds = 5
   function_source_dir         = "${path.module}/src/babbel_home_assignement/"
-  venv_source_dir             = "${path.module}/.venv/lib/python3.11/site-packages/"
   s3_bucket_name              = "data-pipeline-bucket"
 }
 
@@ -121,21 +130,36 @@ resource "aws_iam_role" "iam_for_lambda" {
 }
 
 
+resource "null_resource" "install_dependencies" {
+  provisioner "local-exec" {
+    command = "pip install -r ${path.module}/requirements.txt -t ${local.function_source_dir}/"
+  }
+
+  triggers = {
+    dependencies_versions = filemd5("${path.module}/requirements.txt")
+    source_versions = filemd5("${local.function_source_dir}/${local.function_name}.py")
+  }
+}
+
+resource "random_uuid" "lambda_src_hash" {
+  keepers = {
+    for filename in setunion(
+      fileset(local.function_source_dir, "${local.function_name}.py"),
+      fileset(path.module, "requirements.txt")
+    ) :
+    filename => filemd5("${local.function_source_dir}/${filename}")
+  }
+}
+
 data "archive_file" "lambda" {
   type        = "zip"
   source_dir  = local.function_source_dir
-  output_path = "${local.function_source_dir}.zip"
+  output_path = "${random_uuid.lambda_src_hash.result}.zip"
 
-  source {
-    content  = file("${local.function_source_dir}${local.function_name}.py")
-    filename = "${local.function_name}.py"
-  }
-
-  source {
-    content  = file(local.venv_source_dir)
-    filename = "site-packages/"
-  }
+  depends_on = [null_resource.install_dependencies]
+  excludes = ["__pycache__", "venv"]
 }
+
 
 resource "aws_lambda_function" "lambda_function" {
   filename         = "${local.function_source_dir}.zip"
@@ -152,7 +176,9 @@ resource "aws_lambda_function" "lambda_function" {
       REDIS_HOST = aws_elasticache_cluster.redis.cache_nodes.0.address,
       REDIS_PORT = local.redis_port,
       REDIS_DB   = local.redis_db,
-      S3_BUCKET  = local.s3_bucket_name
+      S3_BUCKET  = local.s3_bucket_name,
+      S3_KEY     = var.s3_key,
+      S3_SECRET  = var.s3_secret
     }
   }
 }
