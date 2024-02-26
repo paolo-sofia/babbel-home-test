@@ -76,7 +76,7 @@ def cache_events_uuid(events: list[str]) -> None:
         redis_client.expire(event_uuid, time=60 * 60 * 24 * 7)
 
 
-def lambda_function(event: JSONType, context) -> JSONType:
+def lambda_handler(event: JSONType, context) -> JSONType:
     """Main lambda function. It executes the sql query and save the results to s3 bucket.
 
     Args:
@@ -110,6 +110,7 @@ def lambda_function(event: JSONType, context) -> JSONType:
 
     return {
         "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
         "body": json.dumps({"num_duplicate_events": num_duplicate_events, "timestamp": current_timestamp})
     }
 
