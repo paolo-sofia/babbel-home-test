@@ -1,3 +1,4 @@
+import datetime
 import os
 import pathlib
 from typing import TypeAlias
@@ -5,6 +6,7 @@ from typing import TypeAlias
 import boto3
 import duckdb
 import pandas as pd
+import pytz
 import redis
 
 JSONType: TypeAlias = dict[str, "JSON"]
@@ -73,7 +75,7 @@ def cache_events_uuid(events: list[str]) -> None:
         redis_client.expire(event_uuid, time=60 * 60 * 24 * 7)
 
 
-def preprocess_and_store(event: JSONType, context) -> None:
+def lambda_function(event: JSONType, context) -> None:
     """Main lambda function. It executes the sql query and save the results to s3 bucket.
 
     Args:
@@ -89,8 +91,8 @@ def preprocess_and_store(event: JSONType, context) -> None:
     global duckdb_conn
 
     # first convert the event json to a pandas dataframe
-    event: pd.DataFrame = pd.DataFrame(event)
-    duckdb_conn = duckdb_conn.register("events", event)
+    event_data: pd.DataFrame = pd.DataFrame(event.get("data", {}))
+    duckdb_conn = duckdb_conn.register("events", event_data)
 
     # load the already processed uuid from cache and use them to create the sql query to execute.
     redis_keys: list[str] = redis_client.keys(pattern="*")
@@ -102,6 +104,8 @@ def preprocess_and_store(event: JSONType, context) -> None:
     cache_events_uuid(event["event_uuid"])
 
     # compute metrics to be exposed.
-    num_duplicate_events: int = event.query("event_uuid in (@redis_keys)").shape[0]
+    num_duplicate_events: int = event_data.query("event_uuid in (@redis_keys)").shape[0]
+    current_timestamp: float = datetime.datetime.now(tz=pytz.timezone("Europe/Berlin")).timestamp()
+
 
 
