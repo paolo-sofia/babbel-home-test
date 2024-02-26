@@ -7,25 +7,40 @@ terraform {
   }
 }
 
-provider "aws" {
-  region = "eu-central-1"
-}
-
 variable "env_name" {
   description = "Environment name"
 }
 
+variable "region" {
+  type = string
+  default = "eu-central-1"
+}
+
+variable "redis_host" {
+  type = string
+  default = "redis-host"
+}
+
+variable "redis_port" {
+  type = number
+  default = 6379
+}
+
+provider "aws" {
+  region = var.region
+}
+
 locals {
   function_name               = "text_scrambler"
-  function_handler            = "main.handler"
+  function_handler            = "lambda_function.handler"
   function_runtime            = "python3.11"
   function_timeout_in_seconds = 5
 
-  function_source_dir = "${path.module}/aws_lambda_functions/${local.function_name}"
+  function_source_dir = "${path.module}/babbel_home_assignement/${local.function_name}"
 }
 
-resource "aws_lambda_function" "function" {
-  function_name = "${local.function_name}-${var.env_name}"
+resource "aws_lambda_function" "lambda_function" {
+  function_name = local.function_name
   handler       = local.function_handler
   runtime       = local.function_runtime
   timeout       = local.function_timeout_in_seconds
@@ -62,4 +77,14 @@ resource "aws_iam_role" "function_role" {
       },
     ]
   })
+}
+
+resource "aws_elasticache_cluster" "redis" {
+  cluster_id              = "redis-cluster"
+  engine                  = "redis"
+  node_type               = "cache.t2.micro"
+  num_cache_nodes         = 1
+  parameter_group_name    = "default.redis7.2"
+  engine_version          = "7.2"
+  port                    = var.redis_port
 }
