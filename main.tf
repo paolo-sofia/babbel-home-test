@@ -36,6 +36,28 @@ data "aws_iam_policy_document" "assume_role" {
   }
 }
 
+data "aws_iam_policy_document" "s3_role" {
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:AbortMultipartUpload",
+      "s3:ListBucket",
+      "s3:DeleteObject",
+      "s3:GetObjectVersion",
+      "s3:ListMultipartUploadParts"
+    ]
+
+    resources = [
+      "arn:aws:s3:::data-pipeline-bucket/*",
+      "arn:aws:s3:::data-pipeline-bucket",
+    ]
+  }
+}
+
+
 resource "aws_iam_policy" "s3_policy" {
   name        = "default_policy_name"
   description = "S3 Access"
@@ -52,7 +74,6 @@ resource "aws_iam_policy" "s3_policy" {
     ]
   })
 }
-
 
 resource "aws_iam_role" "iam_for_lambda" {
   name               = "iam_for_lambda"
