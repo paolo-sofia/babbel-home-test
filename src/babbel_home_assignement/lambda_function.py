@@ -30,9 +30,9 @@ def get_sql_query() -> str:
     strftime(created_datetime, '%Y-%m-%d') as date,
     payload
 FROM events
-WHERE event_uuid NOT IN {}
+WHERE event_uuid NOT IN {cached_uuid_keys}
 )
-TO 's3://data-pipeline-bucket' (FORMAT PARQUET, COMPRESSION ZSTD, PARTITION_BY (date, event_type), FILENAME_PATTERN "{{uuid}}", OVERWRITE_OR_IGNORE true);
+TO 's3://{bucket_name}' (FORMAT PARQUET, COMPRESSION ZSTD, PARTITION_BY (date, event_type), FILENAME_PATTERN "{{uuid}}", OVERWRITE_OR_IGNORE true);
 """
 
 
@@ -58,6 +58,7 @@ def convert_list_to_sql_string(list_to_convert: list) -> str | None:
         print("Error converting list to a list of strings")
         return None
     return f"""('{"','".join(list_to_convert)}')"""
+
 
 def cache_events_uuid(events: list[str]) -> None:
     """Cache event UUIDs in Redis to mark them as processed.
@@ -103,7 +104,7 @@ def lambda_handler(event: JSONType, context) -> JSONType:
     sql_query = get_sql_query()
 
     # executes the sql query and save the results to s3
-    duckdb_conn.execute(sql_query.format(redis_keys_sql))
+    duckdb_conn.execute(sql_query.format(cached_uuid_keys=redis_keys_sql, bucket_name=os.getenv("S3_BUCKET")))
 
     # put the event_uuid in cache
     cache_events_uuid(event["event_uuid"])

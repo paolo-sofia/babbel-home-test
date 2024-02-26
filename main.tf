@@ -16,7 +16,9 @@ locals {
   function_handler            = "lambda_function.lambda_handler"
   function_runtime            = "python3.11"
   function_timeout_in_seconds = 5
-  function_source_dir         = "${path.module}/src/babbel_home_assignement/${local.function_name}"
+  function_source_dir         = "${path.module}/src/babbel_home_assignement/"
+  venv_source_dir             = "${path.module}/.venv/lib/python3.11/site-packages/"
+  s3_bucket_name              = "data-pipeline-bucket"
 }
 
 provider "aws" {
@@ -51,8 +53,8 @@ data "aws_iam_policy_document" "s3_role" {
     ]
 
     resources = [
-      "arn:aws:s3:::data-pipeline-bucket/*",
-      "arn:aws:s3:::data-pipeline-bucket",
+      "arn:aws:s3:::${s3_bucket_name}/*",
+      "arn:aws:s3:::${s3_bucket_name}",
     ]
   }
 }
@@ -61,18 +63,7 @@ data "aws_iam_policy_document" "s3_role" {
 resource "aws_iam_policy" "s3_policy" {
   name        = "default_policy_name"
   description = "S3 Access"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = [
-          "s3:*",
-        ]
-        Effect   = "Allow"
-        Resource = "*"
-      },
-    ]
-  })
+  policy      = data.aws_iam_policy_document.s3_role.json
 }
 
 resource "aws_iam_role" "iam_for_lambda" {
@@ -85,6 +76,16 @@ data "archive_file" "lambda" {
   type        = "zip"
   source_dir  = local.function_source_dir
   output_path = "${local.function_source_dir}.zip"
+
+  source {
+    content  = file("${local.function_source_dir}${local.function_name}.py")
+    filename = "${local.function_name}.py"
+  }
+
+  source {
+    content  = file(local.venv_source_dir)
+    filename = "site-packages/"
+  }
 }
 
 resource "aws_lambda_function" "lambda_function" {
@@ -93,40 +94,20 @@ resource "aws_lambda_function" "lambda_function" {
   handler          = local.function_handler
   runtime          = local.function_runtime
   timeout          = local.function_timeout_in_seconds
-  source_code_hash = data.archive_file.data_preprocessor.output_base64sha256
+  source_code_hash = data.archive_file.lambda.output_base64sha256
 
   role = aws_iam_role.iam_for_lambda.arn
 
   environment {
     variables = {
-      REDIS_HOST = local.redis_host,
+      REDIS_HOST = aws_elasticache_cluster.redis.cache_nodes.0.address,
       REDIS_PORT = local.redis_port,
       REDIS_DB   = local.redis_db,
+      S3_BUCKET  = local.s3_bucket_name
     }
   }
 }
 
-data "archive_file" "data_preprocessor" {
-  source_dir  = local.function_source_dir
-  type        = "zip"
-  output_path = "${local.function_source_dir}.zip"
-}
-
-resource "aws_iam_role" "lambda_role" {
-  name = "terraform_aws_lambda_role"
-
-  assume_role_policy = jsonencode({
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        }
-      },
-    ]
-  })
-}
 
 resource "aws_elasticache_cluster" "redis" {
   cluster_id              = "redis-cluster"
