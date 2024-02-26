@@ -1,7 +1,6 @@
 import datetime
 import json
 import os
-import pathlib
 from typing import TypeAlias
 
 import boto3
@@ -17,6 +16,24 @@ redis_client = redis.StrictRedis(host=os.getenv("REDIS_HOST"), port=os.getenv("R
 s3_client = boto3.client("s3")
 # database="" means to use memory instead of persisting to file
 duckdb_conn: duckdb.DuckDBPyConnection = duckdb.connect(database="")
+
+
+def get_sql_query() -> str:
+    return """COPY
+(SELECT
+    event_uuid,
+    event_name,
+    split_part(event_name, ':', 1) as event_type,
+    split_part(event_name, ':', 2) as event_subtype,
+    created_at,
+    to_timestamp(created_at) as created_datetime,
+    strftime(created_datetime, '%Y-%m-%d') as date,
+    payload
+FROM events
+WHERE event_uuid NOT IN {}
+)
+TO 's3://data-pipeline-bucket' (FORMAT PARQUET, COMPRESSION ZSTD, PARTITION_BY (date, event_type), FILENAME_PATTERN "{{uuid}}", OVERWRITE_OR_IGNORE true);
+"""
 
 
 def convert_list_to_sql_string(list_to_convert: list) -> str | None:
@@ -41,22 +58,6 @@ def convert_list_to_sql_string(list_to_convert: list) -> str | None:
         print("Error converting list to a list of strings")
         return None
     return f"""('{"','".join(list_to_convert)}')"""
-
-
-def load_sql_queries_from_file() -> list[str]:
-    """Load SQL queries from a file and return them as a list of strings.
-
-    Returns:
-        A list of SQL queries.
-
-    Raises:
-        None.
-    """
-    with pathlib.Path("queries.sql").open("r") as file:
-        file_content = file.read()
-
-    return [query.strip() for query in file_content.split(";")]
-
 
 def cache_events_uuid(events: list[str]) -> None:
     """Cache event UUIDs in Redis to mark them as processed.
@@ -97,11 +98,14 @@ def lambda_handler(event: JSONType, context) -> JSONType:
 
     # load the already processed uuid from cache and use them to create the sql query to execute.
     redis_keys: list[str] = redis_client.keys(pattern="*")
-    sql_queries = load_sql_queries_from_file()
     redis_keys_sql: str = convert_list_to_sql_string(redis_keys)
 
+    sql_query = get_sql_query()
+
     # executes the sql query and save the results to s3
-    duckdb_conn.execute(sql_queries[0].format(redis_keys_sql))
+    duckdb_conn.execute(sql_query.format(redis_keys_sql))
+
+    # put the event_uuid in cache
     cache_events_uuid(event["event_uuid"])
 
     # compute metrics to be exposed.
